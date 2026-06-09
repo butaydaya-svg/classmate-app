@@ -61,8 +61,8 @@
       <button onclick="showTab('questions')" id="tab-questions" class="btn-primary" style="flex:1; border-radius:0; font-size:14px; padding: 10px;">
         Questions
       </button>
-      <button onclick="showTab('results')" id="tab-results" class="btn-outline" style="flex:1; border-radius:0; font-size:14px; padding: 10px;">
-        Live Results
+      <button onclick="showTab('results')" id="tab-results" class="btn-outline" style="flex:1; border-radius:0; font-size:14px; padding: 10px; position:relative;">
+        Live Results <span id="results-badge" style="display:none; background:#D85A30; color:#fff; font-size:11px; font-weight:700; padding:1px 6px; border-radius:10px; margin-left:4px;"></span>
       </button>
     </div>
 
@@ -146,14 +146,29 @@ function createSession() {
     .then(r => r.json())
     .then(({ pin }) => {
       currentPin = pin;
+      localStorage.setItem('classmate_pin', pin);
       socket.emit('teacher:register', { pin });
-      document.getElementById('screen-setup').style.display = 'none';
-      document.getElementById('screen-dashboard').style.display = 'block';
-      document.getElementById('pin-display').textContent = pin;
-      document.getElementById('join-url-text').textContent = window.location.host + '/student.html';
+      showDashboard(pin);
     })
     .catch(() => toast('Could not create session. Is the server running?'));
 }
+
+function showDashboard(pin) {
+  document.getElementById('screen-setup').style.display = 'none';
+  document.getElementById('screen-dashboard').style.display = 'block';
+  document.getElementById('pin-display').textContent = pin;
+  document.getElementById('join-url-text').textContent = window.location.host + '/student.html';
+}
+
+// Restore session after page refresh
+socket.on('connect', () => {
+  const savedPin = localStorage.getItem('classmate_pin');
+  if (savedPin && !currentPin) {
+    currentPin = savedPin;
+    socket.emit('teacher:register', { pin: savedPin });
+    showDashboard(savedPin);
+  }
+});
 
 socket.on('session:state', (s) => {
   state = s;
@@ -167,8 +182,12 @@ socket.on('student:joined', ({ count }) => {
 });
 
 socket.on('results:live', ({ results }) => {
-  if (document.getElementById('tab-content-results').style.display !== 'none') {
-    renderResultsData(results);
+  renderResultsData(results);
+  // Show badge on Results tab if teacher is on Questions tab
+  if (document.getElementById('tab-content-results').style.display === 'none') {
+    const badge = document.getElementById('results-badge');
+    badge.textContent = results.total;
+    badge.style.display = 'inline';
   }
 });
 
@@ -386,13 +405,17 @@ function showTab(tab) {
   document.getElementById('tab-questions').className = tab === 'questions' ? 'btn-primary' : 'btn-outline';
   document.getElementById('tab-results').className = tab === 'results' ? 'btn-primary' : 'btn-outline';
   document.getElementById('tab-questions').style.cssText = 'flex:1; border-radius:0; font-size:14px; padding:10px;';
-  document.getElementById('tab-results').style.cssText = 'flex:1; border-radius:0; font-size:14px; padding:10px;';
-  if (tab === 'results') renderResults();
+  document.getElementById('tab-results').style.cssText = 'flex:1; border-radius:0; font-size:14px; padding:10px; position:relative;';
+  if (tab === 'results') {
+    renderResults();
+    document.getElementById('results-badge').style.display = 'none';
+  }
 }
 
 function endSession() {
   if (confirm('End this session? Students will be disconnected.')) {
     socket.emit('teacher:activate', { pin: currentPin, index: -1 });
+    localStorage.removeItem('classmate_pin');
     location.href = '/';
   }
 }

@@ -146,6 +146,7 @@ io.on('connection', (socket) => {
     if (q) {
       const results = buildResults(session, questionId);
       io.to(session.teacherSocketId).emit('results:live', { questionId, results });
+      io.to(session.teacherSocketId).emit('session:state', buildState(session));
     }
   });
 
