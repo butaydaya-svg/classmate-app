@@ -122,6 +122,9 @@
           <p>Activate a question to see live results.</p>
         </div>
       </div>
+
+      <!-- Previous responses history -->
+      <div id="history-panel" style="margin-top:8px;"></div>
     </div>
 
   </div>
@@ -146,7 +149,7 @@ function createSession() {
     .then(r => r.json())
     .then(({ pin }) => {
       currentPin = pin;
-      localStorage.setItem('classmate_pin', pin);
+      localStorage.setItem('classcheck_pin', pin);
       socket.emit('teacher:register', { pin });
       showDashboard(pin);
     })
@@ -162,7 +165,7 @@ function showDashboard(pin) {
 
 // Restore session after page refresh
 socket.on('connect', () => {
-  const savedPin = localStorage.getItem('classmate_pin');
+  const savedPin = localStorage.getItem('classcheck_pin');
   if (savedPin && !currentPin) {
     currentPin = savedPin;
     socket.emit('teacher:register', { pin: savedPin });
@@ -174,6 +177,7 @@ socket.on('session:state', (s) => {
   state = s;
   renderQuestionList();
   if (state.activeIndex >= 0) renderResults();
+  if (document.getElementById('tab-content-results').style.display !== 'none') renderHistory();
 });
 
 socket.on('student:joined', ({ count }) => {
@@ -396,7 +400,109 @@ function deactivate() {
       <div class="icon">📊</div>
       <p>Activate a question to see live results.</p>
     </div>`;
+  renderHistory();
   toast('Question stopped');
+}
+
+function renderHistory() {
+  const panel = document.getElementById('history-panel');
+  if (!panel) return;
+
+  const answered = state.questions.filter(q => (state.responses[q.id] || []).length > 0);
+  if (!answered.length) { panel.innerHTML = ''; return; }
+
+  const typeIcon = { multiple_choice: '🔘', open_ended: '💬', feeling: '😊' };
+
+  let html = `
+    <div class="row-between" style="margin-bottom:8px;">
+      <p class="label">Previous responses</p>
+      <button class="btn-outline btn-sm" onclick="exportResults()">Export CSV</button>
+    </div>`;
+
+  for (const q of answered) {
+    const responses = state.responses[q.id] || [];
+    const isActive = state.questions[state.activeIndex] && state.questions[state.activeIndex].id === q.id;
+    if (isActive) continue;
+
+    html += `<div class="card" style="margin-bottom:10px;">
+      <div class="row-between mb-8">
+        <span style="font-size:13px; font-weight:500;">${typeIcon[q.type]} ${esc(q.text)}</span>
+        <span class="pill pill-teal" style="flex-shrink:0;">${responses.length} resp.</span>
+      </div>`;
+
+    if (q.type === 'multiple_choice') {
+      const total = responses.length || 1;
+      const tally = {};
+      for (const opt of q.options) tally[opt] = 0;
+      for (const r of responses) { if (tally[r.answer] !== undefined) tally[r.answer]++; }
+      for (const [opt, count] of Object.entries(tally)) {
+        const pct = Math.round((count / total) * 100) || 0;
+        html += `<div class="bar-wrap">
+          <div class="bar-label"><span>${esc(opt)}</span><span>${count}</span></div>
+          <div class="bar-track"><div class="bar-fill" style="width:${responses.length ? pct : 0}%">${pct > 15 ? pct+'%' : ''}</div></div>
+        </div>`;
+      }
+    }
+
+    if (q.type === 'feeling') {
+      const labels = { '😄':'Great','🙂':'Good','😐':'Okay','😕':'Not great','😟':'Struggling' };
+      const tally = {};
+      ['😄','🙂','😐','😕','😟'].forEach(f => tally[f] = 0);
+      for (const r of responses) { if (tally[r.answer] !== undefined) tally[r.answer]++; }
+      html += `<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:6px; text-align:center;">`;
+      for (const [emoji, count] of Object.entries(tally)) {
+        html += `<div><div style="font-size:22px;">${emoji}</div>
+          <div style="font-size:16px; font-weight:600; color:var(--purple);">${count}</div>
+          <div style="font-size:10px; color:var(--text-muted);">${labels[emoji]}</div></div>`;
+      }
+      html += `</div>`;
+    }
+
+    if (q.type === 'open_ended') {
+      html += `<div class="open-answer-list">` +
+        responses.map(r => `<div class="open-answer-item">${esc(r.answer)}</div>`).join('') +
+        `</div>`;
+    }
+
+    html += `</div>`;
+  }
+
+  panel.innerHTML = html;
+}
+
+function exportResults() {
+  const rows = ['Question,Type,Answer,Count'];
+  for (const q of state.questions) {
+    const responses = state.responses[q.id] || [];
+    if (!responses.length) continue;
+
+    if (q.type === 'multiple_choice') {
+      const tally = {};
+      for (const opt of q.options) tally[opt] = 0;
+      for (const r of responses) { if (tally[r.answer] !== undefined) tally[r.answer]++; }
+      for (const [opt, count] of Object.entries(tally)) {
+        rows.push(`"${q.text}","Multiple Choice","${opt}",${count}`);
+      }
+    } else if (q.type === 'feeling') {
+      const tally = {};
+      ['😄','🙂','😐','😕','😟'].forEach(f => tally[f] = 0);
+      for (const r of responses) { if (tally[r.answer] !== undefined) tally[r.answer]++; }
+      for (const [emoji, count] of Object.entries(tally)) {
+        rows.push(`"${q.text}","Feeling","${emoji}",${count}`);
+      }
+    } else {
+      for (const r of responses) {
+        rows.push(`"${q.text}","Open-Ended","${r.answer.replace(/"/g,'""')}",`);
+      }
+    }
+  }
+
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `classcheck-session-${currentPin}-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  toast('Exported as CSV');
 }
 
 function showTab(tab) {
@@ -408,6 +514,7 @@ function showTab(tab) {
   document.getElementById('tab-results').style.cssText = 'flex:1; border-radius:0; font-size:14px; padding:10px; position:relative;';
   if (tab === 'results') {
     renderResults();
+    renderHistory();
     document.getElementById('results-badge').style.display = 'none';
   }
 }
@@ -415,7 +522,7 @@ function showTab(tab) {
 function endSession() {
   if (confirm('End this session? Students will be disconnected.')) {
     socket.emit('teacher:activate', { pin: currentPin, index: -1 });
-    localStorage.removeItem('classmate_pin');
+    localStorage.removeItem('classcheck_pin');
     location.href = '/';
   }
 }
