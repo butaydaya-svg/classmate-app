@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: classmate-app
+    name: classcheck-app
     runtime: node
     buildCommand: npm install
     startCommand: node server.js

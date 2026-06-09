@@ -1,5 +1,5 @@
 {
-  "name": "classmate-pwa",
+  "name": "classcheck-pwa",
   "version": "1.0.0",
   "description": "Lightweight classroom formative assessment PWA",
   "main": "server.js",

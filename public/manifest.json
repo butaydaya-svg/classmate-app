@@ -1,6 +1,6 @@
 {
-  "name": "ClassMate — Classroom Assessment",
-  "short_name": "ClassMate",
+  "name": "ClassCheck — Classroom Assessment",
+  "short_name": "ClassCheck",
   "description": "Live formative assessment for teachers and students",
   "start_url": "/",
   "display": "standalone",

@@ -1,4 +1,4 @@
-const CACHE = 'classmate-v1';
+const CACHE = 'classcheck-v1';
 const ASSETS = ['/', '/index.html', '/teacher.html', '/student.html', '/styles.css', '/app.css'];
 
 self.addEventListener('install', e => {
