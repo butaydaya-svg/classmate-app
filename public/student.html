@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#534AB7">
+  <title>Join — ClassMate</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<div class="page" id="app">
+
+  <!-- JOIN SCREEN -->
+  <div id="screen-join">
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-dot"></div>
+        ClassMate
+      </div>
+      <button class="btn-outline btn-sm" onclick="location.href='/'">Back</button>
+    </div>
+
+    <div style="padding: 32px 0;">
+      <h2 style="font-size: 22px; font-weight: 600; margin-bottom: 8px;">Join a session</h2>
+      <p class="text-muted mb-12" style="margin-bottom: 24px;">Enter the 6-digit PIN shown by your teacher.</p>
+
+      <div class="mb-12">
+        <p class="label mb-8">Session PIN</p>
+        <input
+          class="pin-input"
+          type="tel"
+          id="pin-input"
+          maxlength="6"
+          placeholder="000000"
+          inputmode="numeric"
+          autocomplete="off"
+          oninput="this.value=this.value.replace(/\D/g,'')"
+          onkeydown="if(event.key==='Enter') joinSession()"
+        >
+      </div>
+
+      <button class="btn-primary" style="width:100%; padding: 14px;" onclick="joinSession()">
+        Join Session
+      </button>
+
+      <p class="text-center text-muted mt-16" style="font-size: 13px;">
+        Your responses are always anonymous.
+      </p>
+    </div>
+  </div>
+
+  <!-- WAITING SCREEN -->
+  <div id="screen-waiting" style="display:none;">
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-dot"></div>
+        ClassMate
+      </div>
+      <div class="pin-badge" id="joined-pin-badge">------</div>
+    </div>
+
+    <div class="waiting-screen">
+      <div class="pulse">⏳</div>
+      <h2 style="font-size: 20px; font-weight: 600;">You're in!</h2>
+      <p class="text-muted">Waiting for your teacher to start a question…</p>
+      <p class="text-sm" style="margin-top: 8px; color: var(--purple); font-weight: 500;">PIN: <span id="waiting-pin"></span></p>
+    </div>
+  </div>
+
+  <!-- QUESTION SCREEN -->
+  <div id="screen-question" style="display:none;">
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-dot"></div>
+        ClassMate
+      </div>
+      <div class="pin-badge" id="question-pin-badge">------</div>
+    </div>
+
+    <div id="question-body" style="padding-top: 8px;"></div>
+  </div>
+
+  <!-- RESULTS SCREEN (when teacher shares) -->
+  <div id="screen-results" style="display:none;">
+    <div class="topbar">
+      <div class="logo">
+        <div class="logo-dot"></div>
+        ClassMate
+      </div>
+      <div class="pin-badge" id="results-pin-badge">------</div>
+    </div>
+
+    <div id="results-body" style="padding-top: 8px;"></div>
+  </div>
+
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+let currentPin = null;
+let currentQuestion = null;
+let selectedAnswer = null;
+let hasResponded = false;
+
+function joinSession() {
+  const pin = document.getElementById('pin-input').value.trim();
+  if (pin.length !== 6) { toast('Enter the full 6-digit PIN'); return; }
+
+  fetch(`/api/session/${pin}`)
+    .then(r => {
+      if (!r.ok) throw new Error('not found');
+      return r.json();
+    })
+    .then(data => {
+      currentPin = pin;
+      socket.emit('student:join', { pin });
+      showWaiting(pin);
+      if (data.activeQuestion) {
+        showQuestion(data.activeQuestion);
+      }
+    })
+    .catch(() => toast('Session not found. Check the PIN and try again.'));
+}
+
+function showWaiting(pin) {
+  document.getElementById('screen-join').style.display = 'none';
+  document.getElementById('screen-question').style.display = 'none';
+  document.getElementById('screen-results').style.display = 'none';
+  document.getElementById('screen-waiting').style.display = 'block';
+  document.getElementById('joined-pin-badge').textContent = pin;
+  document.getElementById('waiting-pin').textContent = pin;
+}
+
+function showQuestion(q) {
+  currentQuestion = q;
+  selectedAnswer = null;
+  hasResponded = false;
+
+  document.getElementById('screen-join').style.display = 'none';
+  document.getElementById('screen-waiting').style.display = 'none';
+  document.getElementById('screen-results').style.display = 'none';
+  document.getElementById('screen-question').style.display = 'block';
+  document.getElementById('question-pin-badge').textContent = currentPin;
+
+  renderQuestion(q);
+}
+
+function renderQuestion(q) {
+  const body = document.getElementById('question-body');
+  let html = `<div class="card-surface mb-12"><p style="font-size:18px; font-weight:600; line-height:1.4;">${esc(q.text)}</p></div>`;
+
+  if (q.type === 'multiple_choice') {
+    html += `<div class="mc-options" id="mc-options">` +
+      q.options.map((opt, i) => `
+        <button class="mc-option" id="mc-${i}" onclick="selectMC(${i}, '${esc(opt)}')">
+          <span class="mc-option-letter">${String.fromCharCode(65+i)}</span>
+          ${esc(opt)}
+        </button>`).join('') +
+      `</div>
+      <button class="btn-primary" style="width:100%; margin-top:16px;" onclick="submitResponse()" id="submit-btn" disabled>
+        Submit answer
+      </button>`;
+  }
+
+  if (q.type === 'feeling') {
+    const feelings = [
+      { emoji: '😄', label: 'Great' },
+      { emoji: '🙂', label: 'Good' },
+      { emoji: '😐', label: 'Okay' },
+      { emoji: '😕', label: 'Not great' },
+      { emoji: '😟', label: 'Struggling' }
+    ];
+    html += `
+      <p class="text-muted text-sm mb-12" style="margin-bottom:16px;">Tap how you feel right now. Your response is anonymous.</p>
+      <div class="feeling-grid">` +
+      feelings.map(f => `
+        <button class="feeling-btn" id="feel-${f.emoji}" onclick="selectFeeling('${f.emoji}')">
+          ${f.emoji}
+          <span class="flabel">${f.label}</span>
+        </button>`).join('') +
+      `</div>
+      <button class="btn-primary" style="width:100%; margin-top:16px;" onclick="submitResponse()" id="submit-btn" disabled>
+        Share feeling
+      </button>`;
+  }
+
+  if (q.type === 'open_ended') {
+    html += `
+      <p class="text-muted text-sm" style="margin-bottom:12px;">Type your response below. It will be shared anonymously.</p>
+      <textarea id="open-answer" placeholder="Write your answer here…" rows="4" oninput="selectedAnswer=this.value.trim(); document.getElementById('submit-btn').disabled=!selectedAnswer;"></textarea>
+      <button class="btn-primary" style="width:100%; margin-top:12px;" onclick="submitResponse()" id="submit-btn" disabled>
+        Submit response
+      </button>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function selectMC(index, value) {
+  document.querySelectorAll('.mc-option').forEach(b => b.classList.remove('selected'));
+  document.getElementById(`mc-${index}`).classList.add('selected');
+  selectedAnswer = value;
+  document.getElementById('submit-btn').disabled = false;
+}
+
+function selectFeeling(emoji) {
+  document.querySelectorAll('.feeling-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById(`feel-${emoji}`).classList.add('selected');
+  selectedAnswer = emoji;
+  document.getElementById('submit-btn').disabled = false;
+}
+
+function submitResponse() {
+  if (!selectedAnswer || hasResponded) return;
+  socket.emit('student:respond', {
+    pin: currentPin,
+    questionId: currentQuestion.id,
+    answer: selectedAnswer
+  });
+}
+
+socket.on('response:ack', () => {
+  hasResponded = true;
+  const body = document.getElementById('question-body');
+  body.innerHTML = `
+    <div class="response-success">
+      <div class="check-circle">✓</div>
+      <h2 style="font-size:20px; font-weight:600;">Response submitted!</h2>
+      <p class="text-muted">Your answer was recorded anonymously.</p>
+      <p class="text-muted text-sm" style="margin-top: 8px;">Waiting for the teacher…</p>
+    </div>`;
+});
+
+socket.on('question:active', ({ index, question }) => {
+  if (!currentPin) return;
+  if (question) {
+    showQuestion(question);
+  } else {
+    showWaiting(currentPin);
+  }
+});
+
+socket.on('results:update', ({ results }) => {
+  showResults(results);
+});
+
+socket.on('results:hide', () => {
+  if (hasResponded) {
+    const body = document.getElementById('question-body');
+    body.innerHTML = `
+      <div class="response-success">
+        <div class="check-circle">✓</div>
+        <h2 style="font-size:20px; font-weight:600;">Response submitted!</h2>
+        <p class="text-muted">Your answer was recorded anonymously.</p>
+        <p class="text-muted text-sm" style="margin-top: 8px;">Waiting for the teacher…</p>
+      </div>`;
+    document.getElementById('screen-results').style.display = 'none';
+    document.getElementById('screen-question').style.display = 'block';
+  }
+});
+
+socket.on('error', (msg) => {
+  toast(msg);
+});
+
+function showResults(results) {
+  document.getElementById('screen-question').style.display = 'none';
+  document.getElementById('screen-waiting').style.display = 'none';
+  document.getElementById('screen-results').style.display = 'block';
+  document.getElementById('results-pin-badge').textContent = currentPin;
+
+  const body = document.getElementById('results-body');
+  let html = `<h2 class="section-title">Class results</h2>`;
+
+  if (results.type === 'multiple_choice') {
+    const total = results.total || 1;
+    html += `<div class="card">`;
+    for (const [opt, count] of Object.entries(results.tally)) {
+      const pct = Math.round((count / total) * 100) || 0;
+      html += `
+        <div class="bar-wrap">
+          <div class="bar-label"><span>${esc(opt)}</span><span>${count}</span></div>
+          <div class="bar-track">
+            <div class="bar-fill" style="width:${results.total ? pct : 0}%">${pct > 15 ? pct+'%' : ''}</div>
+          </div>
+        </div>`;
+    }
+    html += `<p class="text-muted text-sm" style="margin-top:8px;">${results.total} total responses</p></div>`;
+  }
+
+  if (results.type === 'feeling') {
+    const labels = { '😄':'Great','🙂':'Good','😐':'Okay','😕':'Not great','😟':'Struggling' };
+    html += `<div class="card"><div style="display:grid; grid-template-columns:repeat(5,1fr); gap:8px;">`;
+    for (const [emoji, count] of Object.entries(results.tally)) {
+      html += `
+        <div style="text-align:center;">
+          <div style="font-size:28px;">${emoji}</div>
+          <div style="font-size:18px; font-weight:600; color:var(--purple);">${count}</div>
+          <div style="font-size:11px; color:var(--text-muted);">${labels[emoji]}</div>
+        </div>`;
+    }
+    html += `</div></div>`;
+  }
+
+  if (results.type === 'open_ended') {
+    html += `<div class="card"><p class="label mb-8">All answers</p>`;
+    if (!results.answers.length) {
+      html += `<p class="text-muted text-sm">No responses yet.</p>`;
+    } else {
+      html += `<div class="open-answer-list">` +
+        results.answers.map(a => `<div class="open-answer-item">${esc(a)}</div>`).join('') +
+        `</div>`;
+    }
+    html += `</div>`;
+  }
+
+  body.innerHTML = html;
+}
+
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>
